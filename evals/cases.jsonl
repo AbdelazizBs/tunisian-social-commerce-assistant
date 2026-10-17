@@ -1,0 +1,2 @@
+{"name":"price_question_tunisian_arabic","sku":"eval-robe-blue","product":{"name":"Robe bleue","description":"Robe légère, tailles M et L","price_tnd":"65.000","availability":"available"},"message":"قداش سوم الروبة الزرقاء؟","expected_needs_seller":false,"expected_sku":"eval-robe-blue"}
+{"name":"unknown_delivery_policy","sku":"eval-delivery-robe","product":{"name":"Robe d'été","description":"Robe légère, tailles S et M","price_tnd":"72.000","availability":"available"},"message":"توصّلوا لسوسة وقداش تاخو؟","expected_needs_seller":true,"expected_sku":null}
