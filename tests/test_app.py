@@ -24,19 +24,6 @@ def test_product_upsert_is_idempotent_and_updates_approved_facts(tmp_path) -> No
     assert len(listed.json()) == 1
 
 
-def test_no_catalog_returns_seller_prompt_without_model_key(tmp_path, monkeypatch) -> None:
-    monkeypatch.delenv("GROQ_API_KEY", raising=False)
-    app = create_app(f"sqlite:///{tmp_path / 'app.db'}")
-    with TestClient(app) as client:
-        response = client.post("/api/v1/replies/draft", json={"message": "قداش سومو؟"})
-
-    assert response.status_code == 200
-    assert response.json()["draft"] == {
-        "reply_text": "",
-        "matched_product_ids": [],
-        "needs_seller": True,
-        "seller_question": "Add an approved product card before drafting product replies.",
-    }
 
 
 def test_configured_catalog_without_model_key_fails_closed(tmp_path, monkeypatch) -> None:
@@ -48,6 +35,63 @@ def test_configured_catalog_without_model_key_fails_closed(tmp_path, monkeypatch
             json={"name": "Robe bleue", "price_tnd": "65.000", "availability": "available"},
         )
         response = client.post("/api/v1/replies/draft", json={"message": "قداش سوم الروبة؟"})
+
+    assert response.status_code == 503
+    assert "GROQ_API_KEY" in response.json()["detail"]
+
+
+def test_non_text_share_is_a_seller_handoff_without_a_model(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    app = create_app(f"sqlite:///{tmp_path / 'app.db'}")
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/replies/draft",
+            json={"attachment": "voice"},
+        )
+
+    assert response.status_code == 200
+    draft = response.json()["draft"]
+    assert draft["needs_seller"] is True
+    assert draft["reply_text"] == ""
+    assert draft["seller_question"] == "The buyer shared a voice message. What should I tell them?"
+    assert response.json()["model"] == "none"
+
+
+def test_unknown_conversation_is_not_found(tmp_path) -> None:
+    app = create_app(f"sqlite:///{tmp_path / 'app.db'}")
+    with TestClient(app) as client:
+        response = client.get("/api/v1/conversations/4")
+
+    assert response.status_code == 404
+
+
+def test_empty_reply_request_is_rejected(tmp_path) -> None:
+    app = create_app(f"sqlite:///{tmp_path / 'app.db'}")
+    with TestClient(app) as client:
+        response = client.post("/api/v1/replies/draft", json={"message": " "})
+
+    assert response.status_code == 422
+
+
+def test_instruction_list_starts_empty_and_delete_missing_is_not_found(tmp_path) -> None:
+    app = create_app(f"sqlite:///{tmp_path / 'app.db'}")
+    with TestClient(app) as client:
+        listed = client.get("/api/v1/instructions")
+        missing = client.delete("/api/v1/instructions/99")
+
+    assert listed.status_code == 200
+    assert listed.json() == []
+    assert missing.status_code == 404
+
+
+def test_adding_an_instruction_requires_a_model_key(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    app = create_app(f"sqlite:///{tmp_path / 'app.db'}")
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/instructions",
+            json={"text": "Be warm. Delivery to Tunis is 7 TND."},
+        )
 
     assert response.status_code == 503
     assert "GROQ_API_KEY" in response.json()["detail"]

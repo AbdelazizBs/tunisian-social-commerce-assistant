@@ -64,7 +64,11 @@ Human-like means natural language and shop tone—not impersonating a human. If 
 
 If API approval is delayed, validate with a manual reply copilot: the seller pastes or uploads a customer message, receives a grounded draft, then copies it into the native inbox. This does not access or send through the inbox and is not a substitute for the intended integrated product. Use the same approved catalog, order flow, and safety rules so the learning carries forward. Pursue Meta onboarding and App Review in parallel; never bypass them with unofficial automation.
 
-## 5. Shop setup and catalog
+Each shop maintains seller-approved knowledge in three scopes: shop-wide policies and preferences (for example delivery coverage, fees, timing, payment, returns, tone, and language); product facts attached to a specific product or variant (for example price, size, color, material, and availability); and conversation-only answers that apply to one customer thread. Product facts override shop-wide defaults only for that product. Conversation-only answers never become shared knowledge automatically. When scopes conflict or a fact is missing or stale, the assistant asks the seller rather than guessing.
+
+The seller interface provides a simple instruction/fact entry flow with an explicit scope selector, preview of what the assistant will use, edit/deactivate controls, and source and last-updated metadata. Prefer structured fields for repeatable facts and policies; allow plain-language instructions for tone and response behavior, but do not let them override safety rules, verified product data, or platform requirements. Saving a handoff answer as reusable knowledge requires the seller to choose shop-wide or selected-product scope and confirm the resulting entry.
+
+The knowledge store must retain the active value, scope, seller, source, and update time, with change history sufficient to identify and reverse incorrect updates. Conflicting active entries must be surfaced for seller resolution; do not silently choose one. Retrieval uses only active, seller-approved entries for the current shop and relevant product. Measure handoff rate alongside factual-error rate: fewer handoffs are not a success if unsupported answers increase.
 
 Each shop connects one or both supported channels: a Facebook Page in Messenger and/or a WhatsApp Business account supported by the official platform APIs. Account eligibility, permissions, number setup, and onboarding must be tested with pilot shops before implementation promises a frictionless setup.
 

@@ -8,12 +8,13 @@ One shop assistant helps a buyer discover a product, answer approved questions, 
 
 ## Agent design
 
-Do not start with a swarm of independent agents. Build one conversational assistant with clear capabilities and a single source of truth:
-
-- **Product knowledge:** search approved product cards, variants, prices, seller policies, availability, delivery areas, and fees.
+- **Shop knowledge:** maintain reusable shop policies and tone separately from product/variant facts; keep customer-specific answers scoped to one conversation.
+- **Product knowledge:** retrieve seller-approved facts and relevant shop policies; a product-specific value may override a shop default only for that product.
 - **Conversation:** understand the buyer's intent and language; match a clear product; answer safely or ask one short clarifying question.
 - **Order capture:** collect required fields one at a time, summarize them, and create a pending seller-review request only after the buyer confirms.
-- **Seller handoff:** pause that conversation, show what is unknown and the relevant context, then use the seller's response only after approval.
+- **Seller handoff:** pause that conversation, show what is unknown and the relevant context, then let the seller answer directly or explicitly save the answer at a selected scope.
+
+Knowledge entry should favor structured fields for recurring policies and product facts, with plain-language instructions for tone and response behavior. Conflicts, stale facts, and missing answers go to the seller rather than being resolved by guesswork.
 
 The product-card importer is a seller-facing tool, not another autonomous customer-facing agent. It turns a post and its images into draft facts; the seller approves them before use.
 
@@ -66,9 +67,9 @@ The order of WhatsApp and Messenger after the manual pilot is a recommendation, 
 
 ### Stage 1: make shop knowledge usable
 
-**Work:** Build seller setup for the initial apparel use case, policy entry, and structured product cards. Let a seller paste post text and upload images; suggest separate products for clear images; leave unknown facts blank; support splitting/editing ambiguous posts; require approval before an agent can answer from a card. Keep available/sold-out/unknown availability, not unverified exact stock counts.
+**Work:** Build seller setup for shop-wide policies and tone, product/variant facts, and conversation-only handoff answers. Provide a scope selector and preview; require approval for imported product cards and explicit seller choice before saving a handoff answer for reuse. Keep source, update time, active value, and change history; surface conflicts and stale availability for seller resolution.
 
-**Gate:** A seller can add a multi-product post, correct proposed product cards, approve them, and see exactly which facts the assistant may use. A customer image, post caption, or model guess never becomes a product fact by itself.
+**Gate:** A seller can add and update a policy, attach an exception to one product, save a handoff answer at the chosen scope, and verify what the assistant will use. A customer image, post caption, or model guess never becomes a product fact by itself.
 
 ### Stage 2: validate the assistant with a manual reply copilot
 

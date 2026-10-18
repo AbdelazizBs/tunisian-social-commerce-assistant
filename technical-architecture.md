@@ -15,7 +15,7 @@ Build a hosted multi-tenant application with strict shop-data isolation. Start w
 | --- | --- | --- |
 | Application shape | Python modular monolith with FastAPI | Keeps domain rules local while giving us a deployable API; split services only after measured need. |
 | Persistence | SQLModel; SQLite for local development, PostgreSQL for hosted shops | One model layer for a zero-setup local run and a transactional production database. Add Alembic migrations before a pilot that stores real shop data. |
-| Reply generation | LangChain `ChatGroq` with strict JSON-schema output; approved product facts go in the request context | The app already loaded the shop's catalog. A tool loop adds latency/cost and Groq explicitly does not combine tool use with Structured Outputs in one request. |
+| Reply generation | RAG: retrieve only relevant seller-approved records, augment one prompt, and generate every customer-facing draft with LangChain `ChatGroq` strict structured output | Grounded generation for product questions; greetings still go to the model with no product records. Avoid a tool loop because the application already owns and retrieves the catalog. |
 | Workflow orchestration | No custom LangGraph graph in the first slice | This demo is one stateless draft request. Add explicit graph/checkpoint control when live conversations need pause/resume across seller handoffs and restarts. |
 | Critical asynchronous work | Durable database-backed inbox/outbox plus a separate worker when Meta webhooks arrive | FastAPI in-process background tasks are not a durable job queue. Meta retries duplicate WhatsApp webhooks; persist and deduplicate before returning success. |
 | Verification | Pytest for deterministic behavior; a small synthetic-data model eval harness | Separates business-rule regressions from model-quality and cost changes. |
@@ -49,47 +49,54 @@ flowchart LR
 
 The model never sends messages, edits stock, or confirms orders directly. Application code validates the proposed answer and state transition before any side effect.
 
-## Modules and proposed file layout
+## Current modules and ownership
+
+Keep the current local application as a small modular monolith. Each file owns one clear part of the RAG path:
 
 ```text
 src/shop_assistant/
-├── api/                 # FastAPI routes, auth, webhook validation
-├── application/         # Reply, catalog import, order, handoff, usage use cases
-├── domain/              # Shop, product, conversation, order states and rules
-├── agents/              # LangChain harness, tools, structured output
-├── adapters/            # PostgreSQL, model provider, media storage, Meta channels
-└── jobs/                # Durable inbound event processing
-
-evals/
-├── cases/               # Seller-reviewed synthetic and consented examples
-├── run.py               # Replays cases and records quality, latency, and cost
-└── README.md            # How to run and interpret the harness
+├── main.py                 # FastAPI routes, persistence access, request orchestration
+├── catalog.py              # Product schema and approved catalog input
+├── retrieval.py            # Retrieve relevant seller-approved catalog records
+├── seller_instructions.py  # Seller notes and the separate instruction-model prompt
+└── replies.py              # Reply prompt, model calls, structured output, evidence validation
 ```
 
-This is a proposed layout, not a claim about existing source files. Keep the first demo smaller if its implementation does not need a module yet.
+The flow is `main.py → retrieval.py → replies.py → main.py response`. Keep retrieval and prompt construction separate so each can be tested and understood without making `main.py` an agent implementation. Add modules for policy knowledge, conversations, media, and channels when those domains are implemented—not as empty scaffolding.
+
+Use seller-approved product and policy records as the RAG knowledge sources. Do not search the public web for shop-specific facts. A vector database is not justified for this small structured catalog; begin with bounded lexical/attribute retrieval, then add embeddings only if measured seller-reviewed cases show recall failures at larger catalog scale.
 
 ## Request flow
 
 ### Manual copilot demo
 
 1. In the local demo, the seller creates an approved product card in SQLite through the API; hosted shops will use PostgreSQL.
-2. The seller submits a buyer's text message. The application loads the shop-scoped approved products and policy context.
-3. LangChain sends the buyer message and approved catalog facts in one request and validates a typed reply draft or seller handoff using Groq JSON Schema output.
-4. Application code checks the proposed evidence and decision. The demo shows the draft and any seller question; it never sends to a customer.
-5. Record provider, model, token usage, and latency for each model call. Durable per-shop billing records are added before commercial rollout.
+2. The application loads the shop-scoped approved catalog and seller instructions, then retrieves only catalog records relevant to the buyer's product/category/attribute query. Greeting-only messages retrieve no product records.
+3. A photo, voice message, video, or location does not reach a model. The API returns a seller handoff immediately.
+4. Otherwise LangChain sends the buyer message, retrieved catalog records, seller instructions, and response rules in one augmented prompt. The model generates a structured reply or seller handoff.
+5. Application code validates cited product and instruction IDs. An answer grounded in either source is kept. Greetings do not need either source. No message is sent.
+6. Record provider, model, token usage, and latency for each model call. Durable per-shop billing records are added before commercial rollout.
+
+### Seller instructions
+
+The seller teaches the assistant with a free-text note, in the same spirit as Chatbase Build → Instructions. A separate structured model call, not the reply call, turns that note into rules, facts the assistant may answer itself, and cases that still need the seller. The shop stores the result. Reply generation includes those instructions as approved knowledge. If the model cites one of them, validation does not force `needs_seller`. Facts in neither the catalog nor the instructions still become a seller handoff. This is how ordinary conversation and taught shop facts stay with the assistant instead of escalating every time.
+
+### Non-text buyer messages
+
+A photo, voice message, video, or location is not interpreted and is not stored. The reply request can name that attachment kind, and the API returns a seller handoff with an empty customer draft. There is no vision or transcription model in this demo.
 
 ### Official channel flow, after Meta approval
 
 1. Verify the webhook signature and parse the channel payload at the FastAPI boundary.
 2. Insert the platform event under a unique channel event ID and return success promptly. Duplicate deliveries resolve to the existing event.
-3. A worker claims the stored event, downloads temporary media promptly, and records normalized message evidence.
+3. A worker claims the stored event. Non-text content becomes a seller handoff; the assistant does not interpret images, voice, video, or locations.
 4. The application loads the shop's approved catalog, policies, conversation state, and any open order request.
 5. The assistant may propose an answer or handoff. Deterministic application rules own order transitions, missing required fields, price/stock safety, opt-in, and channel messaging-window checks.
 6. Validate the reply and its evidence. If validation fails or required facts are missing, hold and notify the owner. Otherwise send through the official channel adapter and record the delivery result.
 
 ## Model and workflow boundaries
 
-The demo sends only the current buyer message and that shop's approved catalog to the model. The catalog is already loaded by the application, so a model tool call would add an unnecessary round trip. Use a read-only tool loop only when the agent must choose among external capabilities that are not already available to the application.
+The demo retrieves a small set of relevant records from the shop's approved catalog before building the model prompt. Greetings retrieve no catalog facts but still go to the model. A model tool loop would add an unnecessary round trip because the catalog is already loaded by the application; use tools only when the model must select among real external capabilities.
 
 Keep these rules in deterministic Python code: evidence IDs must belong to the loaded catalog; required order fields, one-question-at-a-time progression, customer confirmation, seller accept/reject, availability freshness, duplicate prevention, and account/channel limits. A model suggests values; the domain validates and owns state changes. Groq does not support tool use and Structured Outputs in the same request, so keep those request modes separate.
 
@@ -97,7 +104,7 @@ Keep these rules in deterministic Python code: evidence IDs must belong to the l
 
 - SQLModel owns the local demo's product records in SQLite. Hosted shops use PostgreSQL for shops, channel connections, products, variants, policies, conversations, order requests, handoffs, webhook events, usage, and audit records.
 - Every hosted shop-owned query and write carries a shop identity. Enforce tenant isolation at the repository boundary and test cross-shop access before onboarding a second shop.
-- Store media outside the relational database when production media support is added. Persist its shop, purpose, expiry, and deletion state. Download expiring channel media promptly after event acceptance.
+- This demo does not store buyer photos, voice, video, or locations. A non-text share is only a signal to hand the conversation to the seller.
 - For official webhooks, persist events before acknowledging them, deduplicate by platform event ID, and preserve per-conversation ordering. Retries must converge without duplicate replies or orders.
 - Save outbound intent and provider result so retries cannot send duplicate replies. Distinguish received, processing, held, sent, failed, and seller-reviewed states.
 - Keep secrets in environment or a secret manager. Do not log message bodies, phone numbers, or addresses by default.

@@ -1,0 +1,8 @@
+flowchart TD
+    NOTE[Seller note] --> RULES[Stored instructions]
+    CATALOG[Product catalog] --> RET[Retrieve products]
+    RET --> PROMPT[Reply prompt]
+    RULES --> PROMPT
+    PROMPT --> DRAFT[Structured draft]
+    DRAFT --> CHECK[Validate cited ids]
+    MEDIA[Photo voice video or location] --> HANDOFF[Seller handoff]
