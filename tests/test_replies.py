@@ -2,20 +2,40 @@ import json
 
 import pytest
 
-from shop_assistant.catalog import Availability, Product
-from shop_assistant.replies import (
+from shop_assistant.models import (
     AttachmentKind,
+    Availability,
+    InstructionContent,
+    Product,
     ReplyDraft,
+    ShopInstruction,
+)
+from shop_assistant.replies import (
+    asks_wholesale,
     build_catalog_need_messages,
     build_reply_messages,
+    build_safety_messages,
     handoff_for_attachment,
+    handoff_for_safety,
+    is_social_only,
     validate_evidence,
 )
-from shop_assistant.seller_instructions import (
-    InstructionContent,
-    ShopInstruction,
-    build_instruction_messages,
-)
+from shop_assistant.seller_instructions import build_instruction_messages
+
+
+def test_wholesale_words_go_to_the_seller() -> None:
+    assert asks_wholesale("3andek beljomla?")
+    assert asks_wholesale("prix gros pour 20 pieces")
+    assert asks_wholesale("بالجملة قداه")
+    assert asks_wholesale("soldes ken fama")
+    assert not asks_wholesale("qadeh el total mta3 zouz robe + livraison")
+
+
+def test_hey_and_slm_take_the_same_social_path() -> None:
+    assert is_social_only("hey")
+    assert is_social_only("slm")
+    assert is_social_only("salut")
+    assert not is_social_only("slm taille M")
 
 
 def test_uncited_answer_is_converted_to_seller_handoff() -> None:
@@ -94,6 +114,44 @@ def test_behy_after_a_missing_size_offers_more_help() -> None:
     assert result.reply_text == "Najmouch n3awnouk f haja okhra?"
     assert result.order_size == ""
     assert "taille" not in result.reply_text.casefold()
+
+
+def test_order_request_asks_for_the_missing_product() -> None:
+    draft = ReplyDraft(
+        reply_text="Najmouch n3awnouk f haja okhra?",
+        customer_intent="social_conversation",
+        matched_product_ids=[],
+        needs_seller=False,
+        seller_question="",
+        order_product="",
+        order_size="",
+        order_phone="",
+        order_address="",
+    )
+
+    result = validate_evidence(draft, [], buyer_message="behy 3adili command")
+
+    assert result.reply_text == "Chnouwa el produit elli t7eb?"
+    assert "haja okhra" not in result.reply_text.casefold()
+
+
+def test_order_request_asks_for_phone_and_address_when_the_product_is_known() -> None:
+    draft = ReplyDraft(
+        reply_text="Najmouch n3awnouk f haja okhra?",
+        customer_intent="shop_question",
+        matched_product_ids=[],
+        needs_seller=False,
+        seller_question="",
+        order_product="robe été",
+        order_size="S",
+        order_phone="",
+        order_address="",
+    )
+
+    result = validate_evidence(draft, [], buyer_message="3adili commande")
+
+    assert "نومرو" in result.reply_text
+    assert "العنوان" in result.reply_text
 
 
 def test_hamdoullah_does_not_restart_the_greeting() -> None:
@@ -222,12 +280,88 @@ def test_size_follow_up_keeps_the_product_already_discussed() -> None:
     assert "S" in reply_buyer
 
 
+def test_size_missing_from_approved_facts_does_not_ask_for_the_phone() -> None:
+    product = Product(
+        id=3,
+        sku="robe_ete",
+        shop_id="demo-shop",
+        name="robe d'été",
+        availability=Availability.AVAILABLE,
+    )
+    fact = type("Fact", (), {"label": "size", "value": "S"})()
+    draft = ReplyDraft(
+        reply_text="شنوّة نومرو تيليفونك؟",
+        customer_intent="shop_question",
+        matched_product_ids=[3],
+        needs_seller=False,
+        seller_question="",
+        order_product="robe d'été",
+        order_size="L",
+        order_phone="",
+        order_address="",
+    )
+
+    result = validate_evidence(draft, [product], facts_by_id={3: [fact]})
+
+    assert result.order_size == ""
+    assert "taille L" in result.reply_text
+    assert "S" in result.reply_text
+    assert "نومرو" not in result.reply_text
+
+
+def test_prompt_answers_only_from_shop_sources() -> None:
+    system_message = build_reply_messages([], "aslema")[0][1]
+
+    assert "approved facts" in system_message
+    assert "do not guess" in system_message.casefold()
+    assert "clarifying question" in system_message
+
+
+def test_prompt_reads_short_tunisian_spellings() -> None:
+    system_message = build_reply_messages([], "b9adech ?")[0][1]
+
+    assert '"dete" is "d\'été"' in system_message
+    assert "b9adech" in system_message
+    assert "approved_facts" in system_message
+
+
+def test_phone_question_without_a_product_is_rejected() -> None:
+    draft = ReplyDraft(
+        reply_text="شنوّة نومرو تيليفونك؟",
+        customer_intent="shop_question",
+        matched_product_ids=[],
+        needs_seller=False,
+        seller_question="",
+        order_product="robe dete noir",
+        order_size="S",
+        order_phone="",
+        order_address="",
+    )
+
+    result = validate_evidence(draft, [])
+
+    assert "نومرو" not in result.reply_text
+    assert result.order_product == ""
+    assert "ma famech" in result.reply_text.casefold()
+
+
+def test_prompt_asks_phone_and_address_together() -> None:
+    system_message = build_reply_messages([], "robe dete noir T S")[0][1]
+
+    assert "same reply" in system_message
+    assert "robe dete noir T S" in system_message
+    assert "only the phone request" not in system_message
+
+
 def test_prompt_asks_only_the_missing_phone_in_arabic() -> None:
     system_message = build_reply_messages([], "S")[0][1]
 
-    assert "one missing detail only" in system_message
+    assert "same reply" in system_message
     assert "شنوّة نومرو تيليفونك؟" in system_message
     assert "شنوّة العنوان؟" in system_message
+    assert "wa9teh touselni" in system_message
+    assert "ma3lich" in system_message
+    assert "T9sed robe d'été, taille L?" in system_message
     assert "nummar" in system_message
     assert "telfouni" in system_message
     assert "Chnouwa el modèle elli t7eb?" in system_message
@@ -270,6 +404,23 @@ def test_reply_prompt_lets_the_model_read_product_records() -> None:
     assert "robe azrar" in system_message
     assert "Do not expect a fixed word list" in system_message
     assert "7amra' means red" not in system_message
+
+
+def test_illegal_message_goes_to_the_seller_without_a_customer_draft() -> None:
+    draft = handoff_for_safety()
+
+    assert draft.needs_seller is True
+    assert draft.reply_text == ""
+    assert draft.seller_question == ""
+
+
+def test_safety_check_does_not_treat_a_shop_question_as_illegal() -> None:
+    system_message, buyer = build_safety_messages("wa9teh touselni ?")
+
+    assert "tell_seller" in system_message[1]
+    assert "insult" in system_message[1]
+    assert "word list" in system_message[1]
+    assert buyer[1] == "wa9teh touselni ?"
 
 
 def test_non_text_shares_go_to_the_seller() -> None:
@@ -354,15 +505,36 @@ def test_seller_instruction_is_available_to_the_reply_model() -> None:
     assert '"id": 4' in system_message
 
 
-def test_instruction_model_receives_the_seller_note() -> None:
-    note = "Be warm. Delivery to Tunis is 7 TND."
+def test_structure_prompt_uses_only_the_description() -> None:
+    from shop_assistant.catalog import build_structure_messages
 
-    messages = build_instruction_messages(note)
+    messages = build_structure_messages("Robe d'été", "Noire, taille S")
+
+    assert "Do not invent" in messages[0][1]
+    assert "Noire, taille S" in messages[1][1]
+
+
+def test_instruction_update_shows_what_the_new_note_replaced() -> None:
+    from shop_assistant.seller_instructions import instruction_diff
+
+    removed, added = instruction_diff(
+        ["Delivery takes 2 days"],
+        ["Delivery takes 3 days", "Be warm"],
+    )
+
+    assert removed == ["Delivery takes 2 days"]
+    assert added == ["Be warm", "Delivery takes 3 days"]
+
+
+def test_instruction_model_receives_the_old_and_new_note() -> None:
+    note = "Delivery takes 3 days."
+
+    messages = build_instruction_messages(note, ["Delivery takes 2 days"])
 
     assert messages[0][0] == "system"
-    assert "may_answer" in messages[0][1]
-    assert "ask_seller" in messages[0][1]
-    assert messages[1] == ("human", note)
+    assert "drop the old one" in messages[0][1]
+    assert "Delivery takes 2 days" in messages[1][1]
+    assert note in messages[1][1]
 
 
 def _delivery_instruction() -> ShopInstruction:

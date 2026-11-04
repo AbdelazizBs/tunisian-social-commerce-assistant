@@ -1,4 +1,4 @@
-from shop_assistant.catalog import Product
+from shop_assistant.models import Product
 from shop_assistant.retrieval import products_for_question
 
 

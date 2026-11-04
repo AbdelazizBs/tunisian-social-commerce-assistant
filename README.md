@@ -19,6 +19,10 @@ Requires Python 3.12+ and `uv`.
 ```powershell
 uv sync
 $env:GROQ_API_KEY = "your-groq-api-key"
+$env:WHATSAPP_VERIFY_TOKEN = "a-secret-you-choose"
+$env:WHATSAPP_APP_SECRET = "meta-app-secret"
+$env:WHATSAPP_TOKEN = "whatsapp-cloud-api-token"
+$env:WHATSAPP_PHONE_NUMBER_ID = "phone-number-id"
 uv run fastapi dev
 ```
 
